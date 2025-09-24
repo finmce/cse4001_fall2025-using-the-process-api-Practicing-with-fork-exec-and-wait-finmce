@@ -52,6 +52,31 @@ Use the Linux in your CSE4001 container. If you are using macOS, you may use the
 
 
 ```cpp
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/types.h>
+
+int main() {
+    int x = 100;
+    printf("Before fork: PID %d, x=%d\n", getpid(), x);
+
+    pid_t pid = fork();
+
+    if (pid == 0) {
+        // Child
+        printf("Child: initial x=%d\n", x);
+        x = 200;
+        printf("Child: changed x=%d\n", x);
+    } else {
+        // Parent
+        printf("Parent: initial x=%d\n", x);
+        x = 300;
+        printf("Parent: changed x=%d\n", x);
+    }
+
+    return 0;
+}
+//Each process has its own copy of memory after fork(). Changing x in the child doesnt effect the parent, and vice versa.
 // Add your code or answer here. You can also add screenshots showing your program's execution.  
 ```
 
@@ -59,12 +84,60 @@ Use the Linux in your CSE4001 container. If you are using macOS, you may use the
 2. Write a program that opens a file (with the `open()` system call) and then calls `fork()` to create a new process. Can both the child and parent access the file descriptor returned by `open()`? What happens when they are writing to the file concurrently, i.e., at the same time?
 
 ```cpp
+#include <stdio.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <string.h>
+
+int main() {
+    int fd = open("output.txt", O_CREAT | O_WRONLY | O_TRUNC, 0644);
+
+    if (fd < 0) {
+        perror("open failed");
+        return 1;
+    }
+
+    pid_t pid = fork();
+
+    if (pid == 0) {
+        // Child writes
+        const char *msg = "Child writing\n";
+        write(fd, msg, strlen(msg));
+    } else {
+        // Parent writes
+        const char *msg = "Parent writing\n";
+        write(fd, msg, strlen(msg));
+    }
+
+    close(fd);
+    return 0;
+}
+//File descriptors are shared after fork(). Both processes can write to the same file, but writes may interleave if not synchronized.
 // Add your code or answer here. You can also add screenshots showing your program's execution.  
 ```
 
 3. Write another program using `fork()`.The child process should print “hello”; the parent process should print “goodbye”. You should try to ensure that the child process always prints first; can you do this without calling `wait()` in the parent?
 
 ```cpp
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/types.h>
+
+int main() {
+    pid_t pid = fork();
+
+    if (pid == 0) {
+        // Child first
+        printf("hello\n");
+    } else {
+        // Give child a head start
+        sleep(1);
+        printf("goodbye\n");
+    }
+
+    return 0;
+}
+//Without wait(), we can still influence order by delaying the parent (sleep), though it isnt as reliable as wait()
 // Add your code or answer here. You can also add screenshots showing your program's execution.  
 ```
 
@@ -72,24 +145,112 @@ Use the Linux in your CSE4001 container. If you are using macOS, you may use the
 4. Write a program that calls `fork()` and then calls some form of `exec()` to run the program `/bin/ls`. See if you can try all of the variants of `exec()`, including (on Linux) `execl()`, `execle()`, `execlp()`, `execv()`, `execvp()`, and `execvpe()`. Why do you think there are so many variants of the same basic call?
 
 ```cpp
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+
+int main() {
+    pid_t pid = fork();
+
+    if (pid == 0) {
+        // Child replaces itself with /bin/ls
+        char *args[] = { "ls", "-l", NULL };
+
+        // Try one at a time by uncommenting:
+        // execl("/bin/ls", "ls", "-l", NULL);
+        // execle("/bin/ls", "ls", "-l", NULL, environ);
+        // execlp("ls", "ls", "-l", NULL);
+        // execv("/bin/ls", args);
+        execvp("ls", args);
+        // execvpe("ls", args, environ);
+
+        perror("exec failed");
+        exit(1);
+    } else {
+        wait(NULL);
+        printf("Parent: child finished exec()\n");
+    }
+
+    return 0;
+}
+//Different exec*() functions vary in how you pass the program name, args, and environment.
 // Add your code or answer here. You can also add screenshots showing your program's execution.  
 ```
 
 5. Now write a program that uses `wait()` to wait for the child process to finish in the parent. What does `wait()` return? What happens if you use `wait()` in the child?
 
 ```cpp
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <stdlib.h>
+
+int main() {
+    pid_t pid = fork();
+
+    if (pid == 0) {
+        printf("Child exiting with status 42\n");
+        exit(42);
+    } else {
+        int status;
+        pid_t w = wait(&status);
+        printf("Parent: wait() returned PID=%d, status=%d\n", w, WEXITSTATUS(status));
+    }
+
+    return 0;
+}
+//wait() returns the PID of the finished child and stores its exit code in status. If called in the child, it fails
 // Add your code or answer here. You can also add screenshots showing your program's execution.  
 ```
 
 6. Write a slight modification of the previous program, this time using `waitpid()` instead of `wait()`. When would `waitpid()` be useful?
 
 ```cpp
+#include <stdio.h>
+#include <unistd.h>
+#include <sys/wait.h>
+#include <stdlib.h>
+
+int main() {
+    pid_t pid = fork();
+
+    if (pid == 0) {
+        printf("Child running...\n");
+        sleep(2);
+        exit(7);
+    } else {
+        int status;
+        pid_t w = waitpid(pid, &status, 0);
+        printf("Parent: waitpid() returned PID=%d, status=%d\n", w, WEXITSTATUS(status));
+    }
+
+    return 0;
+}
+//waitpid() is useful when you want to wait for a specific child
 // Add your code or answer here. You can also add screenshots showing your program's execution.  
 ```
 
 7. Write a program that creates a child process, and then in the child closes standard output (`STDOUT FILENO`). What happens if the child calls `printf()` to print some output after closing the descriptor?
 
 ```cpp
-// Add your code or answer here. You can also add screenshots showing your program's execution.  
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+
+int main() {
+    pid_t pid = fork();
+
+    if (pid == 0) {
+        close(STDOUT_FILENO);
+        printf("This will not appear on screen!\n");
+        exit(0);
+    } else {
+        wait(NULL);
+        printf("Parent still has stdout open.\n");
+    }
+
+    return 0;
+}
+//Closing STDOUT_FILENO in the child means calls to printf() silently fail Add your code or answer here. You can also add screenshots showing your program's execution.  
 ```
 
